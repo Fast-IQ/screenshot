@@ -2,13 +2,12 @@
 
 package screenshot
 
-
 import (
 	"image"
 	"log"
 
-	"github.com/BurntSushi/xgb"
-	"github.com/BurntSushi/xgb/xproto"
+	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/xproto"
 )
 
 type Screenshoter struct {
@@ -33,7 +32,7 @@ func New() *Screenshoter {
 func (s *Screenshoter) CaptureScreen() (img *image.RGBA, err error) {
 	screenRectangle := s.getScreenRectangle()
 
-	img, err  = s.CaptureRectangle(screenRectangle)
+	img, err = s.CaptureRectangle(screenRectangle)
 
 	return
 }

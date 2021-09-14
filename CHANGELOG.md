@@ -1,6 +1,9 @@
 Version history
 ==============
 
+### Version 2.0.1
+* Changed: use library github.com/jezek instead of github.com/BurntSushi
+
 ### Version 2.0.0
 * Changed: linux and freebsd source code is one file now
 * Changed: linux (and freebsd) code refactored

@@ -6,12 +6,14 @@ Simple cross-platform pure Go screen shot library. (tested on linux&windows&osx)
 * Changed: linux (and freebsd) code refactored
 * Changed: Connection to X in linux is separated from screenshoting (Now no memory leakage while screenshoting in a loop)
 
+## My Changes
+* Changed: use library github.com/jezek instead of github.com/BurntSushi
 
 ## Basic Usage
 Import the package
 ```go
 import (
-    "github.com/rostislaved/screenshot"
+    "github.com/Fast-IQ/screenshot"
 )
 ```
 
@@ -29,7 +31,7 @@ func main() {
 
 ## Dependencies
 * **Windows** - None
-* **Linux/FreeBSD** - https://github.com/BurntSushi/xgb
+* **Linux/FreeBSD** - https://github.com/jezek/xgb
 * **OSX** - cgo (CoreGraphics,CoreFoundation, that should not be a problem)
 
 ## Examples
