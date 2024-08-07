@@ -13,7 +13,7 @@ Simple cross-platform pure Go screen shot library. (tested on linux&windows&osx)
 Import the package
 ```go
 import (
-    "github.com/Fast-IQ/screenshot"
+    "github.com/fast-iq/screenshot"
 )
 ```
 

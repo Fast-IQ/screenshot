@@ -1,5 +1,7 @@
-package screenshot
+//go:build windows
+// +build windows
 
+package screenshot
 
 import (
 	"fmt"
@@ -8,6 +10,10 @@ import (
 	"syscall"
 	"unsafe"
 )
+
+func New() {
+
+}
 
 func ScreenRect() (image.Rectangle, error) {
 	hDC := GetDC(0)
