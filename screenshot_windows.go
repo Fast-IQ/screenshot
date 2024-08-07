@@ -11,41 +11,47 @@ import (
 	"unsafe"
 )
 
-func New() {
-
+type Screenshoter struct {
+	conn bool
 }
 
-func ScreenRect() (image.Rectangle, error) {
-	hDC := GetDC(0)
-	if hDC == 0 {
-		return image.Rectangle{}, fmt.Errorf("Could not Get primary display err:%d\n", GetLastError())
+func New() *Screenshoter {
+	return &Screenshoter{
+		conn: true,
 	}
-	defer ReleaseDC(0, hDC)
-	x := GetDeviceCaps(hDC, HORZRES)
-	y := GetDeviceCaps(hDC, VERTRES)
+}
+
+func (s *Screenshoter) ScreenRect() (image.Rectangle, error) {
+	hDC := s.GetDC(0)
+	if hDC == 0 {
+		return image.Rectangle{}, fmt.Errorf("Could not Get primary display err:%d\n", s.GetLastError())
+	}
+	defer s.ReleaseDC(0, hDC)
+	x := s.GetDeviceCaps(hDC, HORZRES)
+	y := s.GetDeviceCaps(hDC, VERTRES)
 	return image.Rect(0, 0, x, y), nil
 }
 
-func CaptureScreen() (*image.RGBA, error) {
-	r, e := ScreenRect()
+func (s *Screenshoter) CaptureScreen() (img *image.RGBA, err error) {
+	r, e := s.ScreenRect()
 	if e != nil {
 		return nil, e
 	}
-	return CaptureRect(r)
+	return s.CaptureRect(r)
 }
 
-func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
-	hDC := GetDC(0)
+func (s *Screenshoter) CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
+	hDC := s.GetDC(0)
 	if hDC == 0 {
-		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", GetLastError())
+		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", s.GetLastError())
 	}
-	defer ReleaseDC(0, hDC)
+	defer s.ReleaseDC(0, hDC)
 
-	m_hDC := CreateCompatibleDC(hDC)
+	m_hDC := s.CreateCompatibleDC(hDC)
 	if m_hDC == 0 {
-		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", GetLastError())
+		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", s.GetLastError())
 	}
-	defer DeleteDC(m_hDC)
+	defer s.DeleteDC(m_hDC)
 
 	x, y := rect.Dx(), rect.Dy()
 
@@ -59,26 +65,26 @@ func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
 
 	ptr := unsafe.Pointer(uintptr(0))
 
-	m_hBmp := CreateDIBSection(m_hDC, &bt, DIB_RGB_COLORS, &ptr, 0, 0)
+	m_hBmp := s.CreateDIBSection(m_hDC, &bt, DIB_RGB_COLORS, &ptr, 0, 0)
 	if m_hBmp == 0 {
-		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", GetLastError())
+		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", s.GetLastError())
 	}
 	if m_hBmp == InvalidParameter {
 		return nil, fmt.Errorf("One or more of the input parameters is invalid while calling CreateDIBSection.\n")
 	}
-	defer DeleteObject(HGDIOBJ(m_hBmp))
+	defer s.DeleteObject(HGDIOBJ(m_hBmp))
 
-	obj := SelectObject(m_hDC, HGDIOBJ(m_hBmp))
+	obj := s.SelectObject(m_hDC, HGDIOBJ(m_hBmp))
 	if obj == 0 {
-		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", GetLastError())
+		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", s.GetLastError())
 	}
 	if obj == 0xffffffff { //GDI_ERROR
-		return nil, fmt.Errorf("GDI_ERROR while calling SelectObject err:%d.\n", GetLastError())
+		return nil, fmt.Errorf("GDI_ERROR while calling SelectObject err:%d.\n", s.GetLastError())
 	}
-	defer DeleteObject(obj)
+	defer s.DeleteObject(obj)
 
-	if !BitBlt(m_hDC, 0, 0, x, y, hDC, rect.Min.X, rect.Min.Y, SRCCOPY) {
-		return nil, fmt.Errorf("BitBlt failed err:%d.\n", GetLastError())
+	if !s.BitBlt(m_hDC, 0, 0, x, y, hDC, rect.Min.X, rect.Min.Y, SRCCOPY) {
+		return nil, fmt.Errorf("BitBlt failed err:%d.\n", s.GetLastError())
 	}
 
 	var slice []byte
@@ -97,7 +103,7 @@ func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
 	return img, nil
 }
 
-func GetDeviceCaps(hdc HDC, index int) int {
+func (s *Screenshoter) GetDeviceCaps(hdc HDC, index int) int {
 	ret, _, _ := procGetDeviceCaps.Call(
 		uintptr(hdc),
 		uintptr(index))
@@ -105,14 +111,14 @@ func GetDeviceCaps(hdc HDC, index int) int {
 	return int(ret)
 }
 
-func GetDC(hwnd HWND) HDC {
+func (s *Screenshoter) GetDC(hwnd HWND) HDC {
 	ret, _, _ := procGetDC.Call(
 		uintptr(hwnd))
 
 	return HDC(ret)
 }
 
-func ReleaseDC(hwnd HWND, hDC HDC) bool {
+func (s *Screenshoter) ReleaseDC(hwnd HWND, hDC HDC) bool {
 	ret, _, _ := procReleaseDC.Call(
 		uintptr(hwnd),
 		uintptr(hDC))
@@ -120,19 +126,19 @@ func ReleaseDC(hwnd HWND, hDC HDC) bool {
 	return ret != 0
 }
 
-func DeleteDC(hdc HDC) bool {
+func (s *Screenshoter) DeleteDC(hdc HDC) bool {
 	ret, _, _ := procDeleteDC.Call(
 		uintptr(hdc))
 
 	return ret != 0
 }
 
-func GetLastError() uint32 {
+func (s *Screenshoter) GetLastError() uint32 {
 	ret, _, _ := procGetLastError.Call()
 	return uint32(ret)
 }
 
-func BitBlt(hdcDest HDC, nXDest, nYDest, nWidth, nHeight int, hdcSrc HDC, nXSrc, nYSrc int, dwRop uint) bool {
+func (s *Screenshoter) BitBlt(hdcDest HDC, nXDest, nYDest, nWidth, nHeight int, hdcSrc HDC, nXSrc, nYSrc int, dwRop uint) bool {
 	ret, _, _ := procBitBlt.Call(
 		uintptr(hdcDest),
 		uintptr(nXDest),
@@ -147,7 +153,7 @@ func BitBlt(hdcDest HDC, nXDest, nYDest, nWidth, nHeight int, hdcSrc HDC, nXSrc,
 	return ret != 0
 }
 
-func SelectObject(hdc HDC, hgdiobj HGDIOBJ) HGDIOBJ {
+func (s *Screenshoter) SelectObject(hdc HDC, hgdiobj HGDIOBJ) HGDIOBJ {
 	ret, _, _ := procSelectObject.Call(
 		uintptr(hdc),
 		uintptr(hgdiobj))
@@ -159,14 +165,14 @@ func SelectObject(hdc HDC, hgdiobj HGDIOBJ) HGDIOBJ {
 	return HGDIOBJ(ret)
 }
 
-func DeleteObject(hObject HGDIOBJ) bool {
+func (s *Screenshoter) DeleteObject(hObject HGDIOBJ) bool {
 	ret, _, _ := procDeleteObject.Call(
 		uintptr(hObject))
 
 	return ret != 0
 }
 
-func CreateDIBSection(hdc HDC, pbmi *BITMAPINFO, iUsage uint, ppvBits *unsafe.Pointer, hSection HANDLE, dwOffset uint) HBITMAP {
+func (s *Screenshoter) CreateDIBSection(hdc HDC, pbmi *BITMAPINFO, iUsage uint, ppvBits *unsafe.Pointer, hSection HANDLE, dwOffset uint) HBITMAP {
 	ret, _, _ := procCreateDIBSection.Call(
 		uintptr(hdc),
 		uintptr(unsafe.Pointer(pbmi)),
@@ -178,7 +184,7 @@ func CreateDIBSection(hdc HDC, pbmi *BITMAPINFO, iUsage uint, ppvBits *unsafe.Po
 	return HBITMAP(ret)
 }
 
-func CreateCompatibleDC(hdc HDC) HDC {
+func (s *Screenshoter) CreateCompatibleDC(hdc HDC) HDC {
 	ret, _, _ := procCreateCompatibleDC.Call(
 		uintptr(hdc))
 
