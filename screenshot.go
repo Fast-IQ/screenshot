@@ -1,4 +1,4 @@
-// Package screenshot captures screen-shot image as image.RGBA.
+// Package screenshot captures screenshot image as image.RGBA.
 // Mac, Windows, Linux, FreeBSD, OpenBSD and NetBSD are supported.
 package screenshot
 
@@ -24,7 +24,7 @@ func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
 
 func createImage(rect image.Rectangle) (img *image.RGBA, e error) {
 	img = nil
-	e = errors.New("Cannot create image.RGBA")
+	e = errors.New("Cannot create image.RGBA ")
 
 	defer func() {
 		err := recover()
