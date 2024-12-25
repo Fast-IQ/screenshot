@@ -1,10 +1,10 @@
 screenshot
 ==========
 
-![](https://github.com/kbinani/screenshot/actions/workflows/build.yml/badge.svg)
-[![](https://img.shields.io/badge/godoc-reference-5272B4.svg)](https://godoc.org/github.com/kbinani/screenshot)
-[![](https://img.shields.io/badge/license-MIT-428F7E.svg?style=flat)](https://github.com/kbinani/screenshot/blob/master/LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kbinani/screenshot)](https://goreportcard.com/report/github.com/kbinani/screenshot)
+![](https://github.com/Fast-IQ/screenshot-1/actions/workflows/build.yml/badge.svg)
+[![](https://img.shields.io/badge/godoc-reference-5272B4.svg)](https://godoc.org/github.com/Fast-IQ/screenshot-1)
+[![](https://img.shields.io/badge/license-MIT-428F7E.svg?style=flat)](https://github.com/Fast-IQ/screenshot-1/blob/master/LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Fast-IQ/screenshot-1)](https://goreportcard.com/report/github.com/Fast-IQ/screenshot-1)
 
 * Go library to capture desktop screen.
 * Multiple display supported.
@@ -20,7 +20,7 @@ example
 	package main
 
 	import (
-		"github.com/kbinani/screenshot"
+		"github.com/Fast-IQ/screenshot-1"
 		"image/png"
 		"os"
 		"fmt"
