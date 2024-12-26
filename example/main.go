@@ -39,7 +39,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		fileName := fmt.Sprintf("%d_%dx%d.png", i, bounds.Dx(), bounds.Dy())
+		fileName := fmt.Sprintf("example/%d_%dx%d.png", i, bounds.Dx(), bounds.Dy())
 		save(img, fileName)
 
 		fmt.Printf("#%d : %v \"%s\"\n", i, bounds, fileName)
@@ -51,5 +51,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	save(img, "all.png")
+	save(img, "example/all.png")
 }
