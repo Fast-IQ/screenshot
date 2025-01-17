@@ -32,3 +32,5 @@ lib64/
 *.out
 
 
+/example/all.png
+/example/0_1920x1080.png
