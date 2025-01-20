@@ -5,6 +5,7 @@ package screenshot
 import (
 	"errors"
 	"github.com/lxn/win"
+	"golang.org/x/sys/windows"
 	"image"
 	"syscall"
 	"unsafe"
@@ -72,7 +73,8 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 		return nil, errors.New("size failed (width or height are consistent)")
 	}
 	if !win.BitBlt(memory_device, 0, 0, int32(width), int32(height), hdc, int32(x), int32(y), win.SRCCOPY) {
-		return nil, errors.New("BitBlt failed")
+		err := windows.GetLastError()
+		return nil, errors.Join(errors.New("BitBlt failed"), err)
 	}
 
 	if win.GetDIBits(hdc, bitmap, 0, uint32(height), (*uint8)(memptr), (*win.BITMAPINFO)(unsafe.Pointer(&header)), win.DIB_RGB_COLORS) == 0 {
