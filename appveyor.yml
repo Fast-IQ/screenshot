@@ -2,7 +2,7 @@ version: "0.0.{build}"
 
 stack: go 1.20
 
-clone_folder: c:\gopath\src\github.com\Fast-IQ\screenshot-new
+clone_folder: c:\gopath\src\github.com\Fast-IQ\screenshot
 shallow_clone: true              # копируем только последний коммит, без истории (git clone --depth 1)
 
 environment:
@@ -12,18 +12,14 @@ environment:
       GOARCH: 386
     - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2019
       GOARCH: amd64
-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
-      GOARCH: 386
-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
-      GOARCH: amd64
 
 platform:
   - x64
 
 build_script:
-  - cd c:\gopath\src\github.com\Fast-IQ\screenshot-new
+  - cd c:\gopath\src\github.com\Fast-IQ\screenshot
   - go build
 
 test_script:
-  - cd c:\gopath\src\github.com\Fast-IQ\screenshot-new
+  - cd c:\gopath\src\github.com\Fast-IQ\screenshot
   - go test -cover

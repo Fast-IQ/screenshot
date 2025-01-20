@@ -6,7 +6,7 @@ import (
 	"image/png"
 	"os"
 
-	"github.com/Fast-IQ/screenshot-new"
+	"github.com/Fast-IQ/screenshot"
 )
 
 // save *image.RGBA to filePath with PNG format.

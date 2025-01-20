@@ -1,4 +1,4 @@
-module github.com/Fast-IQ/screenshot-new
+module github.com/Fast-IQ/screenshot
 
 go 1.21
 
