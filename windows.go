@@ -27,62 +27,115 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	}
 
 	hwnd := getDesktopWindow()
-	hdc := win.GetDC(hwnd)
-	if hdc == 0 {
+	hdcScreen := win.GetDC(0)
+	hdcWindow := win.GetDC(hwnd)
+	if hdcWindow == 0 {
 		return nil, errors.New("GetDC failed")
 	}
-	defer win.ReleaseDC(hwnd, hdc)
+	defer win.ReleaseDC(hwnd, hdcWindow)
 
-	memory_device := win.CreateCompatibleDC(hdc)
-	if memory_device == 0 {
+	hdcMemDC := win.CreateCompatibleDC(hdcWindow)
+	if hdcMemDC == 0 {
 		return nil, errors.New("CreateCompatibleDC failed")
 	}
-	defer win.DeleteDC(memory_device)
+	defer win.DeleteDC(hdcMemDC)
 
-	bitmap := win.CreateCompatibleBitmap(hdc, int32(width), int32(height))
-	if bitmap == 0 {
+	//New
+	// Get the client area for size calculation.
+	var rcClient win.RECT
+	win.GetClientRect(hwnd, &rcClient)
+
+	// This is the best stretch mode.
+	win.SetStretchBltMode(hdcWindow, win.HALFTONE)
+
+	// The source DC is the entire screen, and the destination DC is the current window (HWND)
+	if !win.StretchBlt(hdcWindow,
+		0, 0,
+		rcClient.Right, rcClient.Bottom,
+		hdcScreen,
+		0, 0,
+		win.GetSystemMetrics(win.SM_CXSCREEN),
+		win.GetSystemMetrics(win.SM_CYSCREEN),
+		win.SRCCOPY) {
+		err := windows.GetLastError()
+		return nil, errors.Join(errors.New("StretchBlt has failed"), err)
+	}
+
+	// Create a compatible bitmap from the Window DC.
+	hbmScreen := win.CreateCompatibleBitmap(hdcWindow,
+		rcClient.Right-rcClient.Left,
+		rcClient.Bottom-rcClient.Top)
+	if hbmScreen == 0 {
 		return nil, errors.New("CreateCompatibleBitmap failed")
 	}
-	defer win.DeleteObject(win.HGDIOBJ(bitmap))
+	defer win.DeleteObject(win.HGDIOBJ(hbmScreen))
 
-	var header win.BITMAPINFOHEADER
-	header.BiSize = uint32(unsafe.Sizeof(header))
-	header.BiPlanes = 1
-	header.BiBitCount = 32
-	header.BiWidth = int32(width)
-	header.BiHeight = int32(-height)
-	header.BiCompression = win.BI_RGB
-	header.BiSizeImage = 0
+	// Select the compatible bitmap into the compatible memory DC.
+	win.SelectObject(hdcMemDC, win.HGDIOBJ(hbmScreen))
 
-	// GetDIBits balks at using Go memory on some systems. The MSDN example uses
-	// GlobalAlloc, so we'll do that too. See:
-	// https://docs.microsoft.com/en-gb/windows/desktop/gdi/capturing-an-image
-	bitmapDataSize := uintptr(((int64(width)*int64(header.BiBitCount) + 31) / 32) * 4 * int64(height))
-	hmem := win.GlobalAlloc(win.GMEM_MOVEABLE, bitmapDataSize)
-	defer win.GlobalFree(hmem)
-	memptr := win.GlobalLock(hmem)
-	defer win.GlobalUnlock(hmem)
-
-	old := win.SelectObject(memory_device, win.HGDIOBJ(bitmap))
-	if old == 0 {
-		return nil, errors.New("SelectObject failed")
-	}
-	defer win.SelectObject(memory_device, old)
-
-	if x == width || y == height {
-		return nil, errors.New("size failed (width or height are consistent)")
-	}
-	if !win.BitBlt(memory_device, 0, 0, int32(width), int32(height), hdc, int32(x), int32(y), win.SRCCOPY) {
+	// Bit block transfer into our compatible memory DC.
+	if !win.BitBlt(hdcMemDC,
+		0, 0,
+		rcClient.Right-rcClient.Left, rcClient.Bottom-rcClient.Top,
+		hdcWindow,
+		0, 0,
+		win.SRCCOPY) {
 		err := windows.GetLastError()
 		return nil, errors.Join(errors.New("BitBlt failed"), err)
 	}
 
-	if win.GetDIBits(hdc, bitmap, 0, uint32(height), (*uint8)(memptr), (*win.BITMAPINFO)(unsafe.Pointer(&header)), win.DIB_RGB_COLORS) == 0 {
+	// Get the BITMAP from the HBITMAP.
+	var bmpScreen win.BITMAP
+	win.GetObject(win.HGDIOBJ(hbmScreen), unsafe.Sizeof(bmpScreen), unsafe.Pointer(&bmpScreen))
+
+	var bi win.BITMAPINFOHEADER
+	bi.BiSize = uint32(unsafe.Sizeof(bi))
+	bi.BiWidth = int32(width)
+	bi.BiHeight = int32(-height)
+	bi.BiPlanes = 1
+	bi.BiBitCount = 32
+	bi.BiCompression = win.BI_RGB
+	bi.BiSizeImage = 0
+	bi.BiXPelsPerMeter = 0
+	bi.BiYPelsPerMeter = 0
+	bi.BiClrUsed = 0
+	bi.BiClrImportant = 0
+
+	// GetDIBits balks at using Go memory on some systems. The MSDN example uses
+	// GlobalAlloc, so we'll do that too. See:
+	// https://docs.microsoft.com/en-gb/windows/desktop/gdi/capturing-an-image
+	//	bitmapDataSize := uintptr(((int64(width)*int64(bi.BiBitCount) + 31) / 32) * 4 * int64(height))
+	dwBmpSize := uintptr(((int64(bmpScreen.BmWidth)*int64(bi.BiBitCount) + 31) / 32) * 4 * int64(bmpScreen.BmHeight))
+	hDIB := win.GlobalAlloc(win.GMEM_MOVEABLE, dwBmpSize)
+	defer win.GlobalFree(hDIB)
+	lpbitmap := win.GlobalLock(hDIB)
+	defer win.GlobalUnlock(hDIB)
+
+	/*	old := win.SelectObject(hdcMemDC, win.HGDIOBJ(bitmap))
+		if old == 0 {
+			return nil, errors.New("SelectObject failed")
+		}
+		defer win.SelectObject(hdcMemDC, old)
+
+		if x == width || y == height {
+			return nil, errors.New("size failed (width or height are consistent)")
+		}
+		if !win.BitBlt(hdcMemDC, 0, 0, int32(width), int32(height), hdcWindow, int32(x), int32(y), win.SRCCOPY) {
+			err := windows.GetLastError()
+			return nil, errors.Join(errors.New("BitBlt failed"), err)
+		}*/
+
+	if win.GetDIBits(hdcWindow, hbmScreen,
+		0,
+		uint32(bmpScreen.BmHeight),
+		(*uint8)(lpbitmap),
+		(*win.BITMAPINFO)(unsafe.Pointer(&bi)),
+		win.DIB_RGB_COLORS) == 0 {
 		return nil, errors.New("GetDIBits failed")
 	}
 
 	i := 0
-	src := uintptr(memptr)
+	src := uintptr(lpbitmap)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			v0 := *(*uint8)(unsafe.Pointer(src))
@@ -101,12 +154,12 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 }
 
 func getDesktopWindow() win.HWND {
-	ret, _, _ := syscall.Syscall(funcGetDesktopWindow, 0, 0, 0, 0)
+	ret, _, _ := syscall.SyscallN(5, funcGetDesktopWindow, 0, 0, 0, 0)
 	return win.HWND(ret)
 }
 
 func enumDisplayMonitors(hdc win.HDC, lprcClip *win.RECT, lpfnEnum uintptr, dwData uintptr) bool {
-	ret, _, _ := syscall.Syscall6(funcEnumDisplayMonitors, 4,
+	ret, _, _ := syscall.SyscallN(6, funcEnumDisplayMonitors, 4,
 		uintptr(hdc),
 		uintptr(unsafe.Pointer(lprcClip)),
 		lpfnEnum,
@@ -181,7 +234,7 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	info := _MONITORINFOEX{}
 	info.CbSize = uint32(unsafe.Sizeof(info))
 
-	ret, _, _ := syscall.Syscall(funcGetMonitorInfo, 2, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
+	ret, _, _ := syscall.SyscallN(5, funcGetMonitorInfo, 2, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
 	if ret == 0 {
 		return nil
 	}
@@ -189,7 +242,7 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	devMode := _DEVMODE{}
 	devMode.DmSize = uint16(unsafe.Sizeof(devMode))
 
-	if ret, _, _ := syscall.Syscall(funcEnumDisplaySettings, 3, uintptr(unsafe.Pointer(&info.DeviceName[0])), _ENUM_CURRENT_SETTINGS, uintptr(unsafe.Pointer(&devMode))); ret == 0 {
+	if ret, _, _ := syscall.SyscallN(5, funcEnumDisplaySettings, 3, uintptr(unsafe.Pointer(&info.DeviceName[0])), _ENUM_CURRENT_SETTINGS, uintptr(unsafe.Pointer(&devMode))); ret == 0 {
 		return nil
 	}
 
