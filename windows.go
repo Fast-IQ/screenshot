@@ -154,12 +154,12 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 }
 
 func getDesktopWindow() win.HWND {
-	ret, _, _ := syscall.SyscallN(5, funcGetDesktopWindow, 0, 0, 0, 0)
+	ret, _, _ := syscall.SyscallN(funcGetDesktopWindow, 0, 0, 0)
 	return win.HWND(ret)
 }
 
 func enumDisplayMonitors(hdc win.HDC, lprcClip *win.RECT, lpfnEnum uintptr, dwData uintptr) bool {
-	ret, _, _ := syscall.SyscallN(6, funcEnumDisplayMonitors, 4,
+	ret, _, _ := syscall.SyscallN(funcEnumDisplayMonitors,
 		uintptr(hdc),
 		uintptr(unsafe.Pointer(lprcClip)),
 		lpfnEnum,
@@ -234,7 +234,8 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	info := _MONITORINFOEX{}
 	info.CbSize = uint32(unsafe.Sizeof(info))
 
-	ret, _, _ := syscall.SyscallN(5, funcGetMonitorInfo, 2, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
+	//	ret, _, _ := syscall.Syscall( funcGetMonitorInfo, 2, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
+	ret, _, _ := syscall.SyscallN(funcGetMonitorInfo, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
 	if ret == 0 {
 		return nil
 	}
@@ -242,7 +243,7 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	devMode := _DEVMODE{}
 	devMode.DmSize = uint16(unsafe.Sizeof(devMode))
 
-	if ret, _, _ := syscall.SyscallN(5, funcEnumDisplaySettings, 3, uintptr(unsafe.Pointer(&info.DeviceName[0])), _ENUM_CURRENT_SETTINGS, uintptr(unsafe.Pointer(&devMode))); ret == 0 {
+	if ret, _, _ := syscall.SyscallN(funcEnumDisplaySettings, uintptr(unsafe.Pointer(&info.DeviceName[0])), _ENUM_CURRENT_SETTINGS, uintptr(unsafe.Pointer(&devMode))); ret == 0 {
 		return nil
 	}
 
