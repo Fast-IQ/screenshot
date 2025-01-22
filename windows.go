@@ -7,6 +7,7 @@ import (
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 	"image"
+	"reflect"
 	"syscall"
 	"unsafe"
 )
@@ -32,9 +33,10 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	if hdcWindow == 0 {
 		return nil, errors.New("GetDC failed")
 	}
+	defer win.ReleaseDC(0, hdcScreen)
 	defer win.ReleaseDC(hwnd, hdcWindow)
 
-	hdcMemDC := win.CreateCompatibleDC(hdcWindow)
+	hdcMemDC := win.CreateCompatibleDC(hdcScreen)
 	if hdcMemDC == 0 {
 		return nil, errors.New("CreateCompatibleDC failed")
 	}
@@ -46,10 +48,10 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	win.GetClientRect(hwnd, &rcClient)
 
 	// This is the best stretch mode.
-	win.SetStretchBltMode(hdcWindow, win.HALFTONE)
+	win.SetStretchBltMode(hdcScreen, win.HALFTONE)
 
 	// The source DC is the entire screen, and the destination DC is the current window (HWND)
-	if !win.StretchBlt(hdcWindow,
+	if !win.StretchBlt(hdcScreen,
 		0, 0,
 		rcClient.Right, rcClient.Bottom,
 		hdcScreen,
@@ -62,7 +64,7 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	}
 
 	// Create a compatible bitmap from the Window DC.
-	hbmScreen := win.CreateCompatibleBitmap(hdcWindow,
+	hbmScreen := win.CreateCompatibleBitmap(hdcScreen,
 		rcClient.Right-rcClient.Left,
 		rcClient.Bottom-rcClient.Top)
 	if hbmScreen == 0 {
@@ -77,7 +79,7 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	if !win.BitBlt(hdcMemDC,
 		0, 0,
 		rcClient.Right-rcClient.Left, rcClient.Bottom-rcClient.Top,
-		hdcWindow,
+		hdcScreen,
 		0, 0,
 		win.SRCCOPY) {
 		err := windows.GetLastError()
@@ -89,7 +91,7 @@ func Capture(x, y, width, height int) (*image.RGBA, error) {
 	win.GetObject(win.HGDIOBJ(hbmScreen), unsafe.Sizeof(bmpScreen), unsafe.Pointer(&bmpScreen))
 
 	var bi win.BITMAPINFOHEADER
-	bi.BiSize = uint32(unsafe.Sizeof(bi))
+	bi.BiSize = uint32(reflect.TypeOf(bi).Size())
 	bi.BiWidth = int32(width)
 	bi.BiHeight = int32(-height)
 	bi.BiPlanes = 1
