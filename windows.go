@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/lxn/win"
 	"image"
-	"reflect"
 	"syscall"
 	"unsafe"
 )
@@ -28,25 +27,36 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	}
 	defer win.ReleaseDC(0, hDC)
 
-	m_hDC := win.CreateCompatibleDC(hDC)
-	if m_hDC == 0 {
+	hdcMemDC := win.CreateCompatibleDC(hDC)
+	if hdcMemDC == 0 {
 		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", win.GetLastError())
 	}
-	defer win.DeleteDC(m_hDC)
+	defer win.DeleteDC(hdcMemDC)
 
-	x, y := width, height
+	//New
+	// Get the client area for size calculation.
+	hwnd := getDesktopWindow()
+	var rcClient win.RECT
+	win.GetClientRect(hwnd, &rcClient)
 
 	bt := win.BITMAPINFO{}
-	bt.BmiHeader.BiSize = uint32(reflect.TypeOf(bt.BmiHeader).Size())
-	bt.BmiHeader.BiWidth = int32(x)
-	bt.BmiHeader.BiHeight = int32(-y)
-	bt.BmiHeader.BiPlanes = 1
-	bt.BmiHeader.BiBitCount = 32
-	bt.BmiHeader.BiCompression = BI_RGB
+	var bi win.BITMAPINFOHEADER
+	bi.BiSize = uint32(unsafe.Sizeof(bi))
+	bi.BiWidth = int32(width)
+	bi.BiHeight = int32(-height)
+	bi.BiPlanes = 1
+	bi.BiBitCount = 32
+	bi.BiCompression = win.BI_RGB
+	bi.BiSizeImage = 0
+	bi.BiXPelsPerMeter = 0
+	bi.BiYPelsPerMeter = 0
+	bi.BiClrUsed = 0
+	bi.BiClrImportant = 0
+	bt.BmiHeader = bi
 
-	ptr := unsafe.Pointer(uintptr(0))
+	lpbitmap := unsafe.Pointer(uintptr(0))
 
-	m_hBmp := CreateDIBSection(m_hDC, &bt, DIB_RGB_COLORS, &ptr, 0, 0)
+	m_hBmp := CreateDIBSection(hdcMemDC, &bt, DIB_RGB_COLORS, &lpbitmap, 0, 0)
 	if m_hBmp == 0 {
 		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", win.GetLastError())
 	}
@@ -55,7 +65,7 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	}
 	defer win.DeleteObject(win.HGDIOBJ(m_hBmp))
 
-	obj := win.SelectObject(m_hDC, win.HGDIOBJ(m_hBmp))
+	obj := win.SelectObject(hdcMemDC, win.HGDIOBJ(m_hBmp))
 	if obj == 0 {
 		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", win.GetLastError())
 	}
@@ -64,23 +74,44 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	}
 	defer win.DeleteObject(obj)
 
-	if !win.BitBlt(m_hDC, 0, 0, int32(x), int32(y), hDC, int32(xZ), int32(yZ), SRCCOPY) {
-		return nil, fmt.Errorf("BitBlt failed err:%d.\n", win.GetLastError())
+	if !win.BitBlt(hdcMemDC, 0, 0, int32(width), int32(height), hDC, int32(xZ), int32(yZ), SRCCOPY) {
+		return nil, fmt.Errorf("BitBlt failed err:%d.", win.GetLastError())
 	}
 
-	var slice []byte
-	hdrp := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
-	hdrp.Data = uintptr(ptr)
-	hdrp.Len = x * y * 4
-	hdrp.Cap = x * y * 4
+	/*	var slice []byte
+		hdrp := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
+		hdrp.Data = uintptr(ptr)
+		hdrp.Len = width * height * 4
+		hdrp.Cap = width * height * 4
 
-	imageBytes := make([]byte, len(slice))
+		imageBytes := make([]byte, len(slice))
 
-	for i := 0; i < len(imageBytes); i += 4 {
-		imageBytes[i], imageBytes[i+2], imageBytes[i+1], imageBytes[i+3] = slice[i+2], slice[i], slice[i+1], slice[i+3]
+		for i := 0; i < len(imageBytes); i += 4 {
+			imageBytes[i], imageBytes[i+2], imageBytes[i+1], imageBytes[i+3] = slice[i+2], slice[i], slice[i+1], slice[i+3]
+		}
+
+		img := &image.RGBA{imageBytes, 4 * width, image.Rect(0, 0, width, height)}*/
+	rect := image.Rect(0, 0, width, height)
+	img, err := createImage(rect)
+	if err != nil {
+		return nil, err
 	}
 
-	img := &image.RGBA{imageBytes, 4 * x, image.Rect(0, 0, x, y)}
+	i := 0
+	src := uintptr(lpbitmap)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			v0 := *(*uint8)(unsafe.Pointer(src))
+			v1 := *(*uint8)(unsafe.Pointer(src + 1))
+			v2 := *(*uint8)(unsafe.Pointer(src + 2))
+
+			// BGRA => RGBA, and set A to 255
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v2, v1, v0, 255
+
+			i += 4
+			src += 4
+		}
+	}
 	return img, nil
 }
 

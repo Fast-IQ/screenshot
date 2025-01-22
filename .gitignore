@@ -31,6 +31,4 @@ lib64/
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-
-/example/all.png
-/example/0_1920x1080.png
+/example/*.png
