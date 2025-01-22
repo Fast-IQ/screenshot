@@ -3,9 +3,8 @@
 package screenshot
 
 import (
-	"errors"
+	"fmt"
 	"github.com/lxn/win"
-	"golang.org/x/sys/windows"
 	"image"
 	"reflect"
 	"syscall"
@@ -14,150 +13,92 @@ import (
 
 var (
 	libUser32, _               = syscall.LoadLibrary("user32.dll")
+	modgdi32                   = syscall.NewLazyDLL("gdi32.dll")
 	funcGetDesktopWindow, _    = syscall.GetProcAddress(syscall.Handle(libUser32), "GetDesktopWindow")
 	funcEnumDisplayMonitors, _ = syscall.GetProcAddress(syscall.Handle(libUser32), "EnumDisplayMonitors")
 	funcGetMonitorInfo, _      = syscall.GetProcAddress(syscall.Handle(libUser32), "GetMonitorInfoW")
 	funcEnumDisplaySettings, _ = syscall.GetProcAddress(syscall.Handle(libUser32), "EnumDisplaySettingsW")
+	procCreateDIBSection       = modgdi32.NewProc("CreateDIBSection")
 )
 
-func Capture(x, y, width, height int) (*image.RGBA, error) {
-	rect := image.Rect(0, 0, width, height)
-	img, err := createImage(rect)
-	if err != nil {
-		return nil, err
+func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
+	hDC := win.GetDC(0)
+	if hDC == 0 {
+		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", win.GetLastError())
+	}
+	defer win.ReleaseDC(0, hDC)
+
+	m_hDC := win.CreateCompatibleDC(hDC)
+	if m_hDC == 0 {
+		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", win.GetLastError())
+	}
+	defer win.DeleteDC(m_hDC)
+
+	x, y := width, height
+
+	bt := win.BITMAPINFO{}
+	bt.BmiHeader.BiSize = uint32(reflect.TypeOf(bt.BmiHeader).Size())
+	bt.BmiHeader.BiWidth = int32(x)
+	bt.BmiHeader.BiHeight = int32(-y)
+	bt.BmiHeader.BiPlanes = 1
+	bt.BmiHeader.BiBitCount = 32
+	bt.BmiHeader.BiCompression = BI_RGB
+
+	ptr := unsafe.Pointer(uintptr(0))
+
+	m_hBmp := CreateDIBSection(m_hDC, &bt, DIB_RGB_COLORS, &ptr, 0, 0)
+	if m_hBmp == 0 {
+		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", win.GetLastError())
+	}
+	if m_hBmp == InvalidParameter {
+		return nil, fmt.Errorf("One or more of the input parameters is invalid while calling CreateDIBSection.\n")
+	}
+	defer win.DeleteObject(win.HGDIOBJ(m_hBmp))
+
+	obj := win.SelectObject(m_hDC, win.HGDIOBJ(m_hBmp))
+	if obj == 0 {
+		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", win.GetLastError())
+	}
+	if obj == 0xffffffff { //GDI_ERROR
+		return nil, fmt.Errorf("GDI_ERROR while calling SelectObject err:%d.\n", win.GetLastError())
+	}
+	defer win.DeleteObject(obj)
+
+	if !win.BitBlt(m_hDC, 0, 0, int32(x), int32(y), hDC, int32(xZ), int32(yZ), SRCCOPY) {
+		return nil, fmt.Errorf("BitBlt failed err:%d.\n", win.GetLastError())
 	}
 
-	hwnd := getDesktopWindow()
-	hdcScreen := win.GetDC(0)
-	hdcWindow := win.GetDC(hwnd)
-	if hdcWindow == 0 {
-		return nil, errors.New("GetDC failed")
-	}
-	defer win.ReleaseDC(0, hdcScreen)
-	defer win.ReleaseDC(hwnd, hdcWindow)
+	var slice []byte
+	hdrp := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
+	hdrp.Data = uintptr(ptr)
+	hdrp.Len = x * y * 4
+	hdrp.Cap = x * y * 4
 
-	hdcMemDC := win.CreateCompatibleDC(hdcScreen)
-	if hdcMemDC == 0 {
-		return nil, errors.New("CreateCompatibleDC failed")
-	}
-	defer win.DeleteDC(hdcMemDC)
+	imageBytes := make([]byte, len(slice))
 
-	//New
-	// Get the client area for size calculation.
-	var rcClient win.RECT
-	win.GetClientRect(hwnd, &rcClient)
-
-	// This is the best stretch mode.
-	win.SetStretchBltMode(hdcScreen, win.HALFTONE)
-
-	// The source DC is the entire screen, and the destination DC is the current window (HWND)
-	if !win.StretchBlt(hdcScreen,
-		0, 0,
-		rcClient.Right, rcClient.Bottom,
-		hdcScreen,
-		0, 0,
-		win.GetSystemMetrics(win.SM_CXSCREEN),
-		win.GetSystemMetrics(win.SM_CYSCREEN),
-		win.SRCCOPY) {
-		err := windows.GetLastError()
-		return nil, errors.Join(errors.New("StretchBlt has failed"), err)
+	for i := 0; i < len(imageBytes); i += 4 {
+		imageBytes[i], imageBytes[i+2], imageBytes[i+1], imageBytes[i+3] = slice[i+2], slice[i], slice[i+1], slice[i+3]
 	}
 
-	// Create a compatible bitmap from the Window DC.
-	hbmScreen := win.CreateCompatibleBitmap(hdcScreen,
-		rcClient.Right-rcClient.Left,
-		rcClient.Bottom-rcClient.Top)
-	if hbmScreen == 0 {
-		return nil, errors.New("CreateCompatibleBitmap failed")
-	}
-	defer win.DeleteObject(win.HGDIOBJ(hbmScreen))
-
-	// Select the compatible bitmap into the compatible memory DC.
-	win.SelectObject(hdcMemDC, win.HGDIOBJ(hbmScreen))
-
-	// Bit block transfer into our compatible memory DC.
-	if !win.BitBlt(hdcMemDC,
-		0, 0,
-		rcClient.Right-rcClient.Left, rcClient.Bottom-rcClient.Top,
-		hdcScreen,
-		0, 0,
-		win.SRCCOPY) {
-		err := windows.GetLastError()
-		return nil, errors.Join(errors.New("BitBlt failed"), err)
-	}
-
-	// Get the BITMAP from the HBITMAP.
-	var bmpScreen win.BITMAP
-	win.GetObject(win.HGDIOBJ(hbmScreen), unsafe.Sizeof(bmpScreen), unsafe.Pointer(&bmpScreen))
-
-	var bi win.BITMAPINFOHEADER
-	bi.BiSize = uint32(reflect.TypeOf(bi).Size())
-	bi.BiWidth = int32(width)
-	bi.BiHeight = int32(-height)
-	bi.BiPlanes = 1
-	bi.BiBitCount = 32
-	bi.BiCompression = win.BI_RGB
-	bi.BiSizeImage = 0
-	bi.BiXPelsPerMeter = 0
-	bi.BiYPelsPerMeter = 0
-	bi.BiClrUsed = 0
-	bi.BiClrImportant = 0
-
-	// GetDIBits balks at using Go memory on some systems. The MSDN example uses
-	// GlobalAlloc, so we'll do that too. See:
-	// https://docs.microsoft.com/en-gb/windows/desktop/gdi/capturing-an-image
-	//	bitmapDataSize := uintptr(((int64(width)*int64(bi.BiBitCount) + 31) / 32) * 4 * int64(height))
-	dwBmpSize := uintptr(((int64(bmpScreen.BmWidth)*int64(bi.BiBitCount) + 31) / 32) * 4 * int64(bmpScreen.BmHeight))
-	hDIB := win.GlobalAlloc(win.GMEM_MOVEABLE, dwBmpSize)
-	defer win.GlobalFree(hDIB)
-	lpbitmap := win.GlobalLock(hDIB)
-	defer win.GlobalUnlock(hDIB)
-
-	/*	old := win.SelectObject(hdcMemDC, win.HGDIOBJ(bitmap))
-		if old == 0 {
-			return nil, errors.New("SelectObject failed")
-		}
-		defer win.SelectObject(hdcMemDC, old)
-
-		if x == width || y == height {
-			return nil, errors.New("size failed (width or height are consistent)")
-		}
-		if !win.BitBlt(hdcMemDC, 0, 0, int32(width), int32(height), hdcWindow, int32(x), int32(y), win.SRCCOPY) {
-			err := windows.GetLastError()
-			return nil, errors.Join(errors.New("BitBlt failed"), err)
-		}*/
-
-	if win.GetDIBits(hdcWindow, hbmScreen,
-		0,
-		uint32(bmpScreen.BmHeight),
-		(*uint8)(lpbitmap),
-		(*win.BITMAPINFO)(unsafe.Pointer(&bi)),
-		win.DIB_RGB_COLORS) == 0 {
-		return nil, errors.New("GetDIBits failed")
-	}
-
-	i := 0
-	src := uintptr(lpbitmap)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			v0 := *(*uint8)(unsafe.Pointer(src))
-			v1 := *(*uint8)(unsafe.Pointer(src + 1))
-			v2 := *(*uint8)(unsafe.Pointer(src + 2))
-
-			// BGRA => RGBA, and set A to 255
-			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v2, v1, v0, 255
-
-			i += 4
-			src += 4
-		}
-	}
-
+	img := &image.RGBA{imageBytes, 4 * x, image.Rect(0, 0, x, y)}
 	return img, nil
 }
 
 func getDesktopWindow() win.HWND {
 	ret, _, _ := syscall.SyscallN(funcGetDesktopWindow, 0, 0, 0)
 	return win.HWND(ret)
+}
+
+func CreateDIBSection(hdc win.HDC, pbmi *win.BITMAPINFO, iUsage uint, ppvBits *unsafe.Pointer, hSection win.HANDLE, dwOffset uint) win.HBITMAP {
+	ret, _, _ := procCreateDIBSection.Call(
+		uintptr(hdc),
+		uintptr(unsafe.Pointer(pbmi)),
+		uintptr(iUsage),
+		uintptr(unsafe.Pointer(ppvBits)),
+		uintptr(hSection),
+		uintptr(dwOffset))
+
+	return win.HBITMAP(ret)
 }
 
 func enumDisplayMonitors(hdc win.HDC, lprcClip *win.RECT, lpfnEnum uintptr, dwData uintptr) bool {
@@ -256,3 +197,12 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 		Bottom: devMode.DmPosition.Y + int32(devMode.DmPelsHeight),
 	}
 }
+
+const (
+	HORZRES          = 8
+	VERTRES          = 10
+	BI_RGB           = 0
+	InvalidParameter = 2
+	DIB_RGB_COLORS   = 0
+	SRCCOPY          = 0x00CC0020
+)
