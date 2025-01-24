@@ -21,11 +21,21 @@ var (
 )
 
 func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
-	hDC := win.GetDC(0)
+	// Get the client area for size calculation.
+	hwnd := getDesktopWindow()
+	var rcClient win.RECT
+	win.GetClientRect(hwnd, &rcClient)
+
+	hDC := win.GetDC(hwnd)
 	if hDC == 0 {
 		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", win.GetLastError())
 	}
 	defer win.ReleaseDC(0, hDC)
+
+	/*	r := win.GetDeviceCaps(hDC, win.RASTERCAPS)
+		if !(r & win.RC_BITBLT) {
+			return nil, fmt.Errorf("DC does not support BitBlt\n")
+		}*/
 
 	hdcMemDC := win.CreateCompatibleDC(hDC)
 	if hdcMemDC == 0 {
@@ -34,10 +44,6 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	defer win.DeleteDC(hdcMemDC)
 
 	//New
-	// Get the client area for size calculation.
-	hwnd := getDesktopWindow()
-	var rcClient win.RECT
-	win.GetClientRect(hwnd, &rcClient)
 
 	bt := win.BITMAPINFO{}
 	var bi win.BITMAPINFOHEADER
@@ -150,12 +156,6 @@ func countupMonitorCallback(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonit
 	return uintptr(1)
 }
 
-type getMonitorBoundsContext struct {
-	Index int
-	Rect  win.RECT
-	Count int
-}
-
 func getMonitorBoundsCallback(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonitor *win.RECT, dwData uintptr) uintptr {
 	var ctx *getMonitorBoundsContext
 	ctx = (*getMonitorBoundsContext)(unsafe.Pointer(dwData))
@@ -171,6 +171,12 @@ func getMonitorBoundsCallback(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMon
 	}
 
 	return uintptr(0)
+}
+
+type getMonitorBoundsContext struct {
+	Index int
+	Rect  win.RECT
+	Count int
 }
 
 type _MONITORINFOEX struct {
