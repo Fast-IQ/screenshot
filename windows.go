@@ -32,10 +32,11 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	}
 	defer win.ReleaseDC(0, hDC)
 
-	/*	r := win.GetDeviceCaps(hDC, win.RASTERCAPS)
-		if !(r & win.RC_BITBLT) {
-			return nil, fmt.Errorf("DC does not support BitBlt\n")
-		}*/
+	r := win.GetDeviceCaps(hDC, win.RASTERCAPS)
+	// Проверяем, установлен ли флаг RC_BITBLT
+	if r&win.RC_BITBLT == 0 {
+		return nil, fmt.Errorf("BitBlt не поддерживается на этом устройстве.")
+	}
 
 	hdcMemDC := win.CreateCompatibleDC(hDC)
 	if hdcMemDC == 0 {
@@ -43,15 +44,14 @@ func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
 	}
 	defer win.DeleteDC(hdcMemDC)
 
-	//New
-
+	pixel := win.GetDeviceCaps(hDC, win.BITSPIXEL)
 	bt := win.BITMAPINFO{}
 	var bi win.BITMAPINFOHEADER
 	bi.BiSize = uint32(unsafe.Sizeof(bi))
 	bi.BiWidth = int32(width)
 	bi.BiHeight = int32(-height)
 	bi.BiPlanes = 1
-	bi.BiBitCount = 32
+	bi.BiBitCount = uint16(pixel)
 	bi.BiCompression = win.BI_RGB
 	bi.BiSizeImage = 0
 	bi.BiXPelsPerMeter = 0
