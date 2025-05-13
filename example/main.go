@@ -32,7 +32,10 @@ func main() {
 	var all image.Rectangle = image.Rect(0, 0, 0, 0)
 
 	for i := 0; i < n; i++ {
-		bounds := screenshot.GetDisplayBounds(i)
+		bounds, err := screenshot.GetDisplayBounds(i)
+		if err != nil {
+			panic("Bounds uncorrected")
+		}
 		all = bounds.Union(all)
 
 		img, err := screenshot.CaptureRect(bounds)

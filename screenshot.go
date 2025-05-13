@@ -13,8 +13,15 @@ var ErrUnsupported = errors.New("screenshot does not support your platform")
 
 // CaptureDisplay captures whole region of displayIndex'th display, starts at 0 for primary display.
 func CaptureDisplay(displayIndex int) (*image.RGBA, error) {
-	rect := GetDisplayBounds(displayIndex)
-	return CaptureRect(rect)
+	rect, err := GetDisplayBounds(displayIndex)
+	if err != nil {
+		return nil, err
+	}
+	img, err := CaptureRect(rect)
+	if err != nil {
+		return nil, err
+	}
+	return img, nil
 }
 
 // CaptureRect captures specified region of desktop.

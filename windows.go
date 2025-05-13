@@ -3,126 +3,94 @@
 package screenshot
 
 import (
+	"errors"
 	"fmt"
-	"github.com/lxn/win"
 	"image"
+	"runtime"
 	"syscall"
 	"unsafe"
+
+	"github.com/lxn/win"
 )
 
 var (
-	libUser32, _               = syscall.LoadLibrary("user32.dll")
-	modgdi32                   = syscall.NewLazyDLL("gdi32.dll")
-	funcGetDesktopWindow, _    = syscall.GetProcAddress(syscall.Handle(libUser32), "GetDesktopWindow")
-	funcEnumDisplayMonitors, _ = syscall.GetProcAddress(syscall.Handle(libUser32), "EnumDisplayMonitors")
-	funcGetMonitorInfo, _      = syscall.GetProcAddress(syscall.Handle(libUser32), "GetMonitorInfoW")
-	funcEnumDisplaySettings, _ = syscall.GetProcAddress(syscall.Handle(libUser32), "EnumDisplaySettingsW")
-	procCreateDIBSection       = modgdi32.NewProc("CreateDIBSection")
+	libUser32               = syscall.NewLazyDLL("user32.dll")
+	gdi32                   = syscall.NewLazyDLL("gdi32.dll")
+	funcGetDesktopWindow    = libUser32.NewProc("GetDesktopWindow")
+	funcEnumDisplayMonitors = libUser32.NewProc("EnumDisplayMonitors")
+	funcGetMonitorInfo      = libUser32.NewProc("GetMonitorInfoW")
+	funcEnumDisplaySettings = libUser32.NewProc("EnumDisplaySettingsW")
+	procCreateDIBSection    = gdi32.NewProc("CreateDIBSection")
 )
 
 func Capture(xZ, yZ, width, height int) (*image.RGBA, error) {
-	// Get the client area for size calculation.
 	hwnd := getDesktopWindow()
-	var rcClient win.RECT
-	win.GetClientRect(hwnd, &rcClient)
+	if hwnd == 0 {
+		return nil, fmt.Errorf("failed to get desktop window: %d", win.GetLastError())
+	}
 
 	hDC := win.GetDC(hwnd)
 	if hDC == 0 {
-		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", win.GetLastError())
+		return nil, fmt.Errorf("failed to get device context: %d", win.GetLastError())
 	}
-	defer win.ReleaseDC(0, hDC)
-
-	r := win.GetDeviceCaps(hDC, win.RASTERCAPS)
-	// Проверяем, установлен ли флаг RC_BITBLT
-	if r&win.RC_BITBLT == 0 {
-		return nil, fmt.Errorf("BitBlt не поддерживается на этом устройстве.")
-	}
+	defer win.ReleaseDC(hwnd, hDC)
 
 	hdcMemDC := win.CreateCompatibleDC(hDC)
 	if hdcMemDC == 0 {
-		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", win.GetLastError())
+		return nil, fmt.Errorf("failed to create compatible DC: %d", win.GetLastError())
 	}
 	defer win.DeleteDC(hdcMemDC)
 
 	pixel := win.GetDeviceCaps(hDC, win.BITSPIXEL)
-	bt := win.BITMAPINFO{}
-	var bi win.BITMAPINFOHEADER
-	bi.BiSize = uint32(unsafe.Sizeof(bi))
-	bi.BiWidth = int32(width)
-	bi.BiHeight = int32(-height)
-	bi.BiPlanes = 1
-	bi.BiBitCount = uint16(pixel)
-	bi.BiCompression = win.BI_RGB
-	bi.BiSizeImage = 0
-	bi.BiXPelsPerMeter = 0
-	bi.BiYPelsPerMeter = 0
-	bi.BiClrUsed = 0
-	bi.BiClrImportant = 0
-	bt.BmiHeader = bi
+	bt := win.BITMAPINFO{
+		BmiHeader: win.BITMAPINFOHEADER{
+			BiSize:        uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
+			BiWidth:       int32(width),
+			BiHeight:      int32(-height),
+			BiPlanes:      1,
+			BiBitCount:    uint16(pixel),
+			BiCompression: win.BI_RGB,
+		},
+	}
 
-	lpbitmap := unsafe.Pointer(uintptr(0))
-
+	var lpbitmap unsafe.Pointer
 	m_hBmp := CreateDIBSection(hdcMemDC, &bt, DIB_RGB_COLORS, &lpbitmap, 0, 0)
 	if m_hBmp == 0 {
-		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", win.GetLastError())
-	}
-	if m_hBmp == InvalidParameter {
-		return nil, fmt.Errorf("One or more of the input parameters is invalid while calling CreateDIBSection.\n")
+		return nil, fmt.Errorf("failed to create DIB section: %d", win.GetLastError())
 	}
 	defer win.DeleteObject(win.HGDIOBJ(m_hBmp))
 
 	obj := win.SelectObject(hdcMemDC, win.HGDIOBJ(m_hBmp))
-	if obj == 0 {
-		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", win.GetLastError())
+	if obj == 0 || obj == 0xffffffff {
+		return nil, fmt.Errorf("failed to select object: %d", win.GetLastError())
 	}
-	if obj == 0xffffffff { //GDI_ERROR
-		return nil, fmt.Errorf("GDI_ERROR while calling SelectObject err:%d.\n", win.GetLastError())
-	}
-	defer win.DeleteObject(obj)
+	defer win.SelectObject(hdcMemDC, obj)
 
 	if !win.BitBlt(hdcMemDC, 0, 0, int32(width), int32(height), hDC, int32(xZ), int32(yZ), SRCCOPY) {
-		return nil, fmt.Errorf("BitBlt failed err:%d.", win.GetLastError())
+		return nil, fmt.Errorf("bitblt failed: %d", win.GetLastError())
 	}
 
-	/*	var slice []byte
-		hdrp := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
-		hdrp.Data = uintptr(ptr)
-		hdrp.Len = width * height * 4
-		hdrp.Cap = width * height * 4
-
-		imageBytes := make([]byte, len(slice))
-
-		for i := 0; i < len(imageBytes); i += 4 {
-			imageBytes[i], imageBytes[i+2], imageBytes[i+1], imageBytes[i+3] = slice[i+2], slice[i], slice[i+1], slice[i+3]
-		}
-
-		img := &image.RGBA{imageBytes, 4 * width, image.Rect(0, 0, width, height)}*/
 	rect := image.Rect(0, 0, width, height)
 	img, err := createImage(rect)
 	if err != nil {
 		return nil, err
 	}
 
-	i := 0
-	src := uintptr(lpbitmap)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			v0 := *(*uint8)(unsafe.Pointer(src))
-			v1 := *(*uint8)(unsafe.Pointer(src + 1))
-			v2 := *(*uint8)(unsafe.Pointer(src + 2))
-
-			// BGRA => RGBA, and set A to 255
-			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v2, v1, v0, 255
-
-			i += 4
-			src += 4
-		}
+	if lpbitmap == nil {
+		return nil, fmt.Errorf("failed to get bitmap data: %d", win.GetLastError())
 	}
+	bitmapData := unsafe.Slice((*byte)(lpbitmap), width*height*4)
+
+	// Копируем данные в image.RGBA
+	for i := 0; i < len(bitmapData); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = bitmapData[i+2], bitmapData[i+1], bitmapData[i], 255
+	}
+
 	return img, nil
 }
 
 func getDesktopWindow() win.HWND {
-	ret, _, _ := syscall.SyscallN(funcGetDesktopWindow, 0, 0, 0)
+	ret, _, _ := funcGetDesktopWindow.Call(0, 0, 0)
 	return win.HWND(ret)
 }
 
@@ -139,7 +107,7 @@ func CreateDIBSection(hdc win.HDC, pbmi *win.BITMAPINFO, iUsage uint, ppvBits *u
 }
 
 func enumDisplayMonitors(hdc win.HDC, lprcClip *win.RECT, lpfnEnum uintptr, dwData uintptr) bool {
-	ret, _, _ := syscall.SyscallN(funcEnumDisplayMonitors,
+	ret, _, _ := funcEnumDisplayMonitors.Call(
 		uintptr(hdc),
 		uintptr(unsafe.Pointer(lprcClip)),
 		lpfnEnum,
@@ -157,26 +125,61 @@ func countupMonitorCallback(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonit
 }
 
 func getMonitorBoundsCallback(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonitor *win.RECT, dwData uintptr) uintptr {
-	var ctx *getMonitorBoundsContext
-	ctx = (*getMonitorBoundsContext)(unsafe.Pointer(dwData))
-	if ctx.Count != ctx.Index {
-		ctx.Count = ctx.Count + 1
-		return uintptr(1)
+	// Проверяем корректность указателя
+	if dwData == 0 {
+		return uintptr(0) // Некорректный указатель
 	}
 
+	// Преобразуем dwData в контекст
+	ctx, err := unsafeToContext(dwData)
+	if err != nil {
+		return uintptr(0)
+	}
+	pinner := new(runtime.Pinner)
+	pinner.Pin(ctx)
+	defer pinner.Unpin()
+
+	// Проверяем индексацию
+	if ctx.Count != ctx.Index {
+		ctx.Count++
+		return uintptr(1) // Продолжаем перечисление
+	}
+
+	// Получаем реальные размеры монитора
 	if realSize := getMonitorRealSize(hMonitor); realSize != nil {
 		ctx.Rect = *realSize
-	} else {
+	} else if lprcMonitor != nil {
 		ctx.Rect = *lprcMonitor
+	} else {
+		return uintptr(0) // Останавливаем перечисление при ошибке
 	}
 
+	// Останавливаем перечисление
 	return uintptr(0)
+}
+
+func unsafeToContext(dwData uintptr) (*getMonitorBoundsContext, error) {
+	if dwData == 0 {
+		return nil, errors.New("invalid pointer")
+	}
+	return (*getMonitorBoundsContext)(unsafe.Pointer(dwData)), nil
 }
 
 type getMonitorBoundsContext struct {
 	Index int
 	Rect  win.RECT
 	Count int
+}
+
+func getMonitors() []win.RECT {
+	var monitors []win.RECT
+	callback := syscall.NewCallback(func(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonitor *win.RECT, dwData uintptr) uintptr {
+		monitors = append(monitors, *lprcMonitor)
+		return 1
+	})
+
+	enumDisplayMonitors(0, nil, callback, 0)
+	return monitors
 }
 
 type _MONITORINFOEX struct {
@@ -214,8 +217,7 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	info := _MONITORINFOEX{}
 	info.CbSize = uint32(unsafe.Sizeof(info))
 
-	//	ret, _, _ := syscall.Syscall( funcGetMonitorInfo, 2, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
-	ret, _, _ := syscall.SyscallN(funcGetMonitorInfo, uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
+	ret, _, _ := funcGetMonitorInfo.Call(uintptr(hMonitor), uintptr(unsafe.Pointer(&info)), 0)
 	if ret == 0 {
 		return nil
 	}
@@ -223,7 +225,16 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 	devMode := _DEVMODE{}
 	devMode.DmSize = uint16(unsafe.Sizeof(devMode))
 
-	if ret, _, _ := syscall.SyscallN(funcEnumDisplaySettings, uintptr(unsafe.Pointer(&info.DeviceName[0])), _ENUM_CURRENT_SETTINGS, uintptr(unsafe.Pointer(&devMode))); ret == 0 {
+	ret, _, _ = funcEnumDisplaySettings.Call(
+		uintptr(unsafe.Pointer(&info.DeviceName[0])),
+		_ENUM_CURRENT_SETTINGS,
+		uintptr(unsafe.Pointer(&devMode)),
+	)
+	if ret == 0 {
+		return nil
+	}
+
+	if devMode.DmPelsWidth == 0 || devMode.DmPelsHeight == 0 {
 		return nil
 	}
 
@@ -236,10 +247,9 @@ func getMonitorRealSize(hMonitor win.HMONITOR) *win.RECT {
 }
 
 const (
-	HORZRES          = 8
-	VERTRES          = 10
-	BI_RGB           = 0
-	InvalidParameter = 2
-	DIB_RGB_COLORS   = 0
-	SRCCOPY          = 0x00CC0020
+	HORZRES        = 8
+	VERTRES        = 10
+	BI_RGB         = 0
+	DIB_RGB_COLORS = 0
+	SRCCOPY        = 0x00CC0020
 )
