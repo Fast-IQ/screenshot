@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-24.04, windows-latest]
+        os: [ ubuntu-24.04, win_cap-latest]
         include:
         - language: go
           build-mode: autobuild

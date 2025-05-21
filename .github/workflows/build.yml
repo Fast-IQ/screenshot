@@ -13,7 +13,7 @@ jobs:
           - os: macos-latest
             GOOS: darwin
           - os: ubuntu-latest
-            GOOS: windows
+            GOOS: win_cap
           - os: ubuntu-latest
             GOOS: linux
           - os: ubuntu-latest

@@ -5,18 +5,24 @@ import (
 )
 
 func TestCaptureRect(t *testing.T) {
-	bounds := GetDisplayBounds(0)
-	_, err := CaptureRect(bounds)
+	bounds, err := GetDisplayBounds(0)
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = CaptureRect(bounds)
 	if err != nil {
 		t.Error(err)
 	}
 }
 
 func BenchmarkCaptureRect(t *testing.B) {
-	bounds := GetDisplayBounds(0)
+	bounds, err := GetDisplayBounds(0)
+	if err != nil {
+		t.Error(err)
+	}
 	t.ResetTimer()
 	for i := 0; i < t.N; i++ {
-		_, err := CaptureRect(bounds)
+		_, err = CaptureRect(bounds)
 		if err != nil {
 			t.Error(err)
 		}
