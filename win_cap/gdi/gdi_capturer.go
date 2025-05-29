@@ -9,10 +9,12 @@ import (
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 	"image"
+	"runtime"
 	"unsafe"
 )
 
 type GDICapturer struct {
+	monitors []image.Rectangle
 }
 
 // === Подключаем Windows API функции ===
@@ -43,32 +45,40 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 	if hwnd == 0 {
 		return nil, fmt.Errorf("failed to get desktop window")
 	}
+	defer runtime.KeepAlive(hwnd)
 
 	hDC := win.GetDC(hwnd)
 	if hDC == 0 {
 		return nil, fmt.Errorf("failed to get device context")
 	}
 	defer win.ReleaseDC(hwnd, hDC)
+	defer runtime.KeepAlive(hDC)
 
-	// Получаем DPI экрана
 	screenDPI := GetDPI(hDC)
-
-	// Масштабируем размеры под DPI
 	scaledWidth := ScaleForDPI(width, screenDPI)
 	scaledHeight := ScaleForDPI(height, screenDPI)
 
+	if scaledWidth <= 0 || scaledHeight <= 0 {
+		return nil, fmt.Errorf("invalid scaled size: %dx%d", scaledWidth, scaledHeight)
+	}
+
 	hdcMemDC := win.CreateCompatibleDC(hDC)
 	if hdcMemDC == 0 {
-		return nil, fmt.Errorf("failed to create compatible DC")
+		return nil, fmt.Errorf("failed to create memory DC")
 	}
 	defer win.DeleteDC(hdcMemDC)
+	defer runtime.KeepAlive(hdcMemDC)
 
 	pixel := win.GetDeviceCaps(hDC, win.BITSPIXEL)
+	if pixel == 0 {
+		return nil, fmt.Errorf("failed to get bits per pixel")
+	}
+
 	bt := win.BITMAPINFO{
 		BmiHeader: win.BITMAPINFOHEADER{
 			BiSize:        uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
 			BiWidth:       int32(scaledWidth),
-			BiHeight:      int32(-scaledHeight),
+			BiHeight:      -int32(scaledHeight),
 			BiPlanes:      1,
 			BiBitCount:    uint16(pixel),
 			BiCompression: BI_RGB,
@@ -78,19 +88,18 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 	var bits unsafe.Pointer
 	mBmp := CreateDIBSection(hdcMemDC, &bt, DIB_RGB_COLORS, &bits, 0, 0)
 	if mBmp == 0 {
-		return nil, fmt.Errorf("failed to create DIB section")
+		return nil, fmt.Errorf("failed to create DIB section: %d", win.GetLastError())
 	}
 	defer win.DeleteObject(win.HGDIOBJ(mBmp))
 
 	oldObj := win.SelectObject(hdcMemDC, win.HGDIOBJ(mBmp))
 	if oldObj == 0 || oldObj == 0xffffffff {
-		return nil, fmt.Errorf("failed to select object")
+		return nil, fmt.Errorf("SelectObject failed: %d", win.GetLastError())
 	}
 	defer win.SelectObject(hdcMemDC, oldObj)
 
-	// Захватываем с учётом масштабирования DPI
-	if !win.BitBlt(hdcMemDC, 0, 0, int32(scaledWidth), int32(scaledHeight), hDC,
-		int32(ScaleForDPI(x, screenDPI)), int32(ScaleForDPI(y, screenDPI)), SRCCOPY) {
+	if ok := win.BitBlt(hdcMemDC, 0, 0, int32(scaledWidth), int32(scaledHeight), hDC,
+		int32(ScaleForDPI(x, screenDPI)), int32(ScaleForDPI(y, screenDPI)), SRCCOPY); !ok {
 		return nil, fmt.Errorf("bitblt failed")
 	}
 
@@ -101,7 +110,6 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 
 	bitmapData := unsafe.Slice((*byte)(bits), scaledWidth*scaledHeight*4)
 
-	// Downscale до нужного размера
 	for dstY := 0; dstY < height; dstY++ {
 		for dstX := 0; dstX < width; dstX++ {
 			srcX := dstX * scaledWidth / width
@@ -109,10 +117,14 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 			idxSrc := (srcY*scaledWidth + srcX) * 4
 			idxDst := (dstY*width + dstX) * 4
 
-			img.Pix[idxDst+0] = bitmapData[idxSrc+2] // R
-			img.Pix[idxDst+1] = bitmapData[idxSrc+1] // G
-			img.Pix[idxDst+2] = bitmapData[idxSrc+0] // B
-			img.Pix[idxDst+3] = 255                  // A
+			if idxSrc+3 >= len(bitmapData) {
+				continue // избежание out-of-bounds
+			}
+
+			img.Pix[idxDst+0] = bitmapData[idxSrc+2]
+			img.Pix[idxDst+1] = bitmapData[idxSrc+1]
+			img.Pix[idxDst+2] = bitmapData[idxSrc+0]
+			img.Pix[idxDst+3] = 255
 		}
 	}
 
@@ -131,19 +143,24 @@ func (c *GDICapturer) GetDisplayBounds(displayIndex int) (image.Rectangle, error
 }
 
 func (c *GDICapturer) GetAllDisplayBounds() ([]image.Rectangle, error) {
-	var monitors []image.Rectangle
+	if c.monitors == nil {
+		pinner := new(runtime.Pinner)
+		pinner.Pin(&c.monitors)
+		defer pinner.Unpin()
 
-	callback := windows.NewCallbackCDecl(func(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonitor *win.RECT, dwData uintptr) uintptr {
-		monitors = append(monitors, toImageRect(*lprcMonitor))
-		return 1
-	})
+		callback := windows.NewCallbackCDecl(func(hMonitor win.HMONITOR, hdcMonitor win.HDC, lprcMonitor *win.RECT, dwData uintptr) uintptr {
+			c.monitors = append(c.monitors, toImageRect(*lprcMonitor))
+			runtime.KeepAlive(c.monitors)
+			return 1
+		})
+		//defer callback.Release()
 
-	success := win_cap.EnumDisplayMonitors(0, nil, callback, 0)
-	if !success {
-		return nil, fmt.Errorf("failed to enumerate monitors")
+		success := win_cap.EnumDisplayMonitors(0, nil, callback, 0)
+		if !success || len(c.monitors) == 0 {
+			return nil, errors.New("no monitors found")
+		}
 	}
-
-	return monitors, nil
+	return c.monitors, nil
 }
 
 func GetDesktopWindow() win.HWND {
@@ -164,6 +181,9 @@ func CreateDIBSection(hdc win.HDC, pbmi *win.BITMAPINFO, iUsage uint, ppvBits *u
 }
 
 func toImageRect(r win.RECT) image.Rectangle {
+	if r.Right < r.Left || r.Bottom < r.Top {
+		return image.Rect(0, 0, 0, 0)
+	}
 	return image.Rect(
 		int(r.Left),
 		int(r.Top),
@@ -186,5 +206,12 @@ func GetDPI(hdc win.HDC) int {
 
 // Вычисляем коэффициент масштабирования DPI
 func ScaleForDPI(value int, dpi int) int {
-	return value * dpi / 96
+	switch {
+	case dpi < 96:
+		return value
+	case dpi == 96:
+		return value
+	default:
+		return (value * dpi) / 96
+	}
 }
