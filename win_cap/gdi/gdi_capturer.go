@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"github.com/Fast-IQ/screenshot/win_cap"
 	"github.com/lxn/win"
+	"golang.org/x/sys/cpu"
 	"golang.org/x/sys/windows"
 	"image"
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -40,6 +42,9 @@ const (
 	SRCCOPY        = 0x00CC0020
 	LOGPIXELSX     = 88
 )
+
+//go:noescape
+func swapBGRtoRGB_AVX2(src, dst []byte)
 
 func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 	hwnd := GetDesktopWindow()
@@ -103,18 +108,73 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 
 	// Создаем копию данных перед возвратом
 	dataSize := scaledWidth * scaledHeight * 4
+	copiedData := make([]byte, dataSize)
 	pixelData := unsafe.Slice((*byte)(bits), dataSize)
 
-	// Копируем данные в новый буфер
-	copiedData := make([]byte, dataSize)
-	copy(copiedData, pixelData)
+	// Используем SIMD если доступно
+	/*	if supportsAVX2() {
+		workers := runtime.GOMAXPROCS(0)
+		chunkSize := (dataSize/workers + 31) & ^31
+
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func(worker int) {
+				defer wg.Done()
+				start := worker * chunkSize
+				end := start + chunkSize
+				if end > dataSize {
+					end = dataSize
+				}
+
+				// Вызываем AVX2 для каждого блока
+				swapBGRtoRGB_AVX2(
+					pixelData[start:end],
+					copiedData[start:end],
+				)
+			}(w)
+		}
+		wg.Wait()
+	} else {*/
+	// Оптимизированная версия на чистом Go
+	swapBGRtoRGB_Go(pixelData, copiedData)
+	//	}
 
 	return &image.RGBA{
 		Pix:    copiedData,
 		Stride: scaledWidth * 4,
 		Rect:   image.Rect(0, 0, width, height),
 	}, nil
+}
 
+func supportsAVX2() bool {
+	// Реализация проверки поддержки AVX2
+	return cpu.X86.HasAVX2
+}
+
+func swapBGRtoRGB_Go(src, dst []byte) {
+	workers := runtime.GOMAXPROCS(0)
+	chunkSize := (len(src)/workers + 31) & ^31 // Выравниваем по 32 байта
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			start := worker * chunkSize
+			end := start + chunkSize
+			if end > len(src) {
+				end = len(src)
+			}
+
+			// Основной цикл
+			for i := start; i < end; i += 4 {
+				dst[i], dst[i+1], dst[i+2] = src[i+2], src[i+1], src[i]
+				dst[i+3] = src[i+3] // Alpha
+			}
+		}(w)
+	}
+	wg.Wait()
 }
 
 func (c *GDICapturer) GetDisplayBounds(displayIndex int) (image.Rectangle, error) {
