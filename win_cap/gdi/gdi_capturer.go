@@ -33,6 +33,12 @@ var (
 	funcGetDpiForWindow = user32.NewProc("GetDpiForWindow")
 )
 
+var bufPool = sync.Pool{
+	New: func() any { return make([]byte, 0, 1024*1024) },
+}
+
+var hasAVX2 = cpu.X86.HasAVX2
+
 // === Константы ===
 const (
 	HORZRES        = 8
@@ -47,6 +53,8 @@ const (
 func swapBGRtoRGB_AVX2_asm(srcBase *byte, srcLen int, dstBase *byte)
 
 func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	hwnd := GetDesktopWindow()
 	if hwnd == 0 {
 		return nil, fmt.Errorf("failed to get desktop window")
@@ -108,53 +116,31 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 
 	// Создаем копию данных перед возвратом
 	dataSize := scaledWidth * scaledHeight * 4
-	copiedData := make([]byte, dataSize)
-	pixelData := unsafe.Slice((*byte)(bits), dataSize)
+
+	dst := getBuf(dataSize)
+	defer putBuf(dst)
+
+	// pixelData можно брать прямо из bits
+	src := unsafe.Slice((*byte)(bits), dataSize)
 
 	// Используем SIMD если доступно
-	if supportsAVX2() {
-		workers := runtime.GOMAXPROCS(0)
-		chunkSize := (dataSize/workers + 31) & ^31
-
-		var wg sync.WaitGroup
-		for w := 0; w < workers; w++ {
-			wg.Add(1)
-			go func(worker int) {
-				defer wg.Done()
-				start := worker * chunkSize
-				end := start + chunkSize
-				if end > dataSize {
-					end = dataSize
-				}
-
-				// Вызываем AVX2 для каждого блока
-				swapBGRtoRGB_AVX2(pixelData, copiedData)
-			}(w)
-		}
-		wg.Wait()
+	if hasAVX2 {
+		swapBGRtoRGB_AVX2(src, dst)
 	} else {
-		// Оптимизированная версия на чистом Go
-		swapBGRtoRGB_Go(pixelData, copiedData)
+		swapBGRtoRGB_Go(src, dst)
 	}
 
 	return &image.RGBA{
-		Pix:    copiedData,
+		Pix:    dst,
 		Stride: scaledWidth * 4,
 		Rect:   image.Rect(0, 0, width, height),
 	}, nil
 }
 
-func supportsAVX2() bool {
-	// Реализация проверки поддержки AVX2
-	return cpu.X86.HasAVX2
-}
-
 func swapBGRtoRGB_AVX2(src, dst []byte) {
-	if len(src) != len(dst) {
-		panic("mismatched lengths")
-	}
-	if len(src)%4 != 0 {
-		panic("src length must be multiple of 4")
+	// проверяем 1 раз на входе
+	if len(src) != len(dst) || len(src)%4 != 0 {
+		panic("invalid parameters to swapBGRtoRGB_AVX2")
 	}
 	swapBGRtoRGB_AVX2_asm(&src[0], len(src), &dst[0])
 }
@@ -271,4 +257,16 @@ func ScaleForDPI(value int, dpi int) int {
 		return value
 	}
 	return (value*dpi + 48) / 96 // Округление вместо усечения
+}
+
+func getBuf(n int) []byte {
+	b := bufPool.Get().([]byte)
+	if cap(b) < n {
+		b = make([]byte, n)
+	}
+	return b[:n]
+}
+
+func putBuf(b []byte) {
+	bufPool.Put(b[:0])
 }
