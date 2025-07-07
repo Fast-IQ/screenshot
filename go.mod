@@ -10,5 +10,3 @@ require (
 )
 
 require golang.org/x/sys v0.33.0
-
-require github.com/klauspost/cpuid v1.3.1

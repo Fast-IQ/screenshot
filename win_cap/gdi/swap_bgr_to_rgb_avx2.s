@@ -1,49 +1,66 @@
-// +build amd64,!appengine,!gccgo
+//go:build amd64
+// +build amd64
 
 #include "textflag.h"
 
-// mask для VPSHUFB: меняем BGRx → RGBx
-DATA shuffleMask<>+0x00(SB)/8, $0x0201000006020400
-DATA shuffleMask<>+0x08(SB)/8, $0x0A0908000E0C0A00
-DATA shuffleMask<>+0x10(SB)/8, $0x1211100016131400
-DATA shuffleMask<>+0x18(SB)/8, $0x1A1918001E1C1A00
-GLOBL shuffleMask<>(SB), (NOPTR|RODATA), $32
+// Маска VPSHUFB: для каждого из 8 пикселей (4 байта) делает
+// [B,G,R,A]→[R,G,B,A]
+DATA ·shuffleMask+0x00(SB)/8, $0x07040506_03000102
 
-TEXT ·swapBGRtoRGB_AVX2(SB), NOSPLIT, $0-32
-    MOVQ src_base+0(FP), SI       // src pointer
-    MOVQ src_len+8(FP), CX        // length
-    MOVQ dst_base+16(FP), DI      // dst pointer
+// Следующие 8 байт: пиксели 2 и 3
+DATA ·shuffleMask+0x08(SB)/8, $0x0F0C0D0E_0B08090A
 
-    VMOVDQU shuffleMask<>(SB), Y0 // загружаем маску
+// [4,5]
+DATA ·shuffleMask+0x10(SB)/8, $0x17141516_13101112
 
-loop_avx:
+// [6,7]
+DATA ·shuffleMask+0x18(SB)/8, $0x1F1C1D1E_1B18191A
+
+GLOBL ·shuffleMask(SB), RODATA|NOPTR, $32
+
+// void swapBGRtoRGB_AVX2_asm(uint8_t* src, int len, uint8_t* dst)
+TEXT ·swapBGRtoRGB_AVX2_asm(SB), NOSPLIT, $0-24
+    // стек: [srcBase+0][srcLen+8][dstBase+16]
+    MOVQ srcBase+0(FP), SI
+    MOVQ srcLen+8(FP), CX
+    MOVQ dstBase+16(FP), DI
+
+    // загрузили маску в Y0
+    VMOVDQU ·shuffleMask(SB), Y0
+
+mainAVX:
     CMPQ CX, $32
-    JB   tail                     // если <32, идём к хвосту
+    JL tailScalar
+
     VMOVDQU (SI), Y1
-    VPSHUFB Y0, Y1, Y1
-    VMOVDQU Y1, (DI)
+    VPSHUFB Y0, Y1, Y2
+    VMOVDQU Y2, (DI)
+
     ADDQ $32, SI
     ADDQ $32, DI
     SUBQ $32, CX
-    JMP loop_avx
+    JMP mainAVX
 
-tail:
-    TESTQ CX, CX
-    JE done
+tailScalar:
+    CMPQ CX, $4
+    JL done
 
-scalar:
-    MOVB 2(SI), R8B   // R
-    MOVB 1(SI), R9B   // G
-    MOVB (SI), R10B  // B
-    MOVB 3(SI), R11B // A
-    MOVB R8B, (DI)
-    MOVB R9B, 1(DI)
-    MOVB R10B, 2(DI)
-    MOVB R11B, 3(DI)
+scalarLoop:
+    // переставляем BGRx->RGBx по-байтно
+    MOVBLZX 2(SI), AX
+    MOVB    AL,    (DI)
+    MOVBLZX 1(SI), AX
+    MOVB    AL, 1(DI)
+    MOVBLZX 0(SI), AX
+    MOVB    AL, 2(DI)
+    MOVBLZX 3(SI), AX
+    MOVB    AL, 3(DI)
+
     ADDQ $4, SI
     ADDQ $4, DI
     SUBQ $4, CX
-    JNZ scalar
+    CMPQ CX, $4
+    JGE scalarLoop
 
 done:
     VZEROUPPER

@@ -44,7 +44,7 @@ const (
 )
 
 //go:noescape
-func swapBGRtoRGB_AVX2(src, dst []byte)
+func swapBGRtoRGB_AVX2_asm(srcBase *byte, srcLen int, dstBase *byte)
 
 func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 	hwnd := GetDesktopWindow()
@@ -112,7 +112,7 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 	pixelData := unsafe.Slice((*byte)(bits), dataSize)
 
 	// Используем SIMD если доступно
-	/*	if supportsAVX2() {
+	if supportsAVX2() {
 		workers := runtime.GOMAXPROCS(0)
 		chunkSize := (dataSize/workers + 31) & ^31
 
@@ -128,17 +128,14 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 				}
 
 				// Вызываем AVX2 для каждого блока
-				swapBGRtoRGB_AVX2(
-					pixelData[start:end],
-					copiedData[start:end],
-				)
+				swapBGRtoRGB_AVX2(pixelData, copiedData)
 			}(w)
 		}
 		wg.Wait()
-	} else {*/
-	// Оптимизированная версия на чистом Go
-	swapBGRtoRGB_Go(pixelData, copiedData)
-	//	}
+	} else {
+		// Оптимизированная версия на чистом Go
+		swapBGRtoRGB_Go(pixelData, copiedData)
+	}
 
 	return &image.RGBA{
 		Pix:    copiedData,
@@ -150,6 +147,16 @@ func (c *GDICapturer) Capture(x, y, width, height int) (*image.RGBA, error) {
 func supportsAVX2() bool {
 	// Реализация проверки поддержки AVX2
 	return cpu.X86.HasAVX2
+}
+
+func swapBGRtoRGB_AVX2(src, dst []byte) {
+	if len(src) != len(dst) {
+		panic("mismatched lengths")
+	}
+	if len(src)%4 != 0 {
+		panic("src length must be multiple of 4")
+	}
+	swapBGRtoRGB_AVX2_asm(&src[0], len(src), &dst[0])
 }
 
 func swapBGRtoRGB_Go(src, dst []byte) {
